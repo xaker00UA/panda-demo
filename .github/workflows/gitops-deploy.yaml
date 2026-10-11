@@ -1,0 +1,71 @@
+name: Update Helm repository
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        required: true
+        type: string
+      short_commit:
+        required: true
+        type: string
+      git_tag:
+        required: false
+        type: string
+        default: ""
+      deployment_name:
+        required: false
+        type: string
+        default: ""
+      container_name:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      HELM_REPO_URL:
+        required: true
+      HELM_REPO_TOKEN:
+        required: true
+      SERVICE:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gitops
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout update script
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.54.1
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl --fail --silent --show-error --location \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            -o "$RUNNER_TEMP/bin/yq"
+          chmod +x "$RUNNER_TEMP/bin/yq"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Update image and push to main
+        env:
+          HELM_REPO_URL: ${{ secrets.HELM_REPO_URL }}
+          HELM_REPO_TOKEN: ${{ secrets.HELM_REPO_TOKEN }}
+          SERVICE: ${{ secrets.SERVICE }}
+          APP_IMAGE: ${{ inputs.image }}
+          SHORT_COMMIT: ${{ inputs.short_commit }}
+          GIT_TAG: ${{ inputs.git_tag }}
+          DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
+          CONTAINER_NAME: ${{ inputs.container_name }}
+        run: bash .github/scripts/update-helm.sh

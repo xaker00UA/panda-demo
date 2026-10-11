@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: panda
+  name: panda-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: panda-demo
+  template:
+    metadata:
+      labels:
+        app: panda-demo
+    spec:
+      containers:
+        - name: panda-demo
+          image: ""
+          env:
+            - name: "GIT_SHORT_HASH"
+              value: ""
+            - name: "GIT_TAG"
+              value: ""
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: panda
+  name: panda-demo
+spec:
+  selector:
+    app: panda-demo
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: panda-route
+  namespace: panda
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg
+      namespace: default
+  hostnames:
+    - "panda-demo-k8s.wotbstats.xyz"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: "X-Forwarded-Host"
+                value: "panda-demo-k8s.wotbstats.xyz"
+              - name: "X-Forwarded-Proto"
+                value: "https"
+
+      backendRefs:
+        - name: panda-demo
+          port: 8080
+

@@ -1,0 +1,29 @@
+services:
+  panda-app:
+    image: ${APP_IMAGE:-panda-demo:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+          GIT_SHORT_HASH: ${GIT_SHORT_HASH:-unknown}
+          GIT_TAG: ${GIT_TAG:-}
+    container_name: panda-app
+    restart: always
+    environment:
+      GIT_SHORT_HASH: ${GIT_SHORT_HASH:-unknown}
+      GIT_TAG: ${GIT_TAG:-}
+
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx-proxy
+    restart: always
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d/default.conf
+      - /fullchain.pem:/etc/letsencrypt/live/panda.wotbstats.xyz/fullchain.pem
+      - /privkey.pem:/etc/letsencrypt/live/panda.wotbstats.xyz/privkey.pem
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - panda-app

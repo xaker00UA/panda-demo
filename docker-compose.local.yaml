@@ -1,0 +1,26 @@
+services:
+  panda-app:
+    image: ${APP_IMAGE:-panda-demo:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+          GIT_SHORT_HASH: ${GIT_SHORT_HASH:-unknown}
+          GIT_TAG: ${GIT_TAG:-}
+    container_name: panda-app
+    restart: always
+    environment:
+      GIT_SHORT_HASH: ${GIT_SHORT_HASH:-unknown}
+      GIT_TAG: ${GIT_TAG:-}
+
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx-proxy
+    restart: always
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - panda-app

@@ -1,0 +1,28 @@
+server {
+    listen 80;
+    server_name localhost;
+    location / {
+        proxy_pass http://panda-app:8080;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name panda.wotbstats.xyz;
+
+    # Пути к сертификатам (пример для Let's Encrypt)
+    ssl_certificate /etc/letsencrypt/live/panda.wotbstats.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panda.wotbstats.xyz/privkey.pem;
+
+    location / {
+        proxy_pass http://panda-app:8080;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

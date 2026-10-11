@@ -1,0 +1,117 @@
+name: Test and publish container
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ github.event_name != 'push' || !github.event.deleted }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      short_commit: ${{ steps.image.outputs.short_commit }}
+      git_tag: ${{ steps.image.outputs.git_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Format
+        run: uv run ruff format
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Test
+        env:
+          GIT_SHORT_HASH: ${{ github.sha }}
+        run: uv run pytest
+
+      - name: Define image tag
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          short_commit="${GITHUB_SHA:0:7}"
+          image="ghcr.io/${REPOSITORY,,}:${short_commit}"
+          git_tag="$(git describe --tags --exact-match "$GITHUB_SHA" 2>/dev/null || true)"
+          echo "short_commit=$short_commit" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "git_tag=$git_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.image }}
+          build-args: |
+            GIT_SHORT_HASH=${{ steps.image.outputs.short_commit }}
+            GIT_TAG=${{ steps.image.outputs.git_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-vps:
+    needs: build
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/vps-deploy.yaml
+    with:
+      image: ${{ needs.build.outputs.image }}
+      short_commit: ${{ needs.build.outputs.short_commit }}
+      git_tag: ${{ needs.build.outputs.git_tag }}
+      commit: ${{ github.sha }}
+      branch: ${{ github.ref_name }}
+    secrets:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_PATH: ${{ secrets.VPS_PATH }}
+
+  deploy-gitops:
+    needs: build
+    uses: ./.github/workflows/gitops-deploy.yaml
+    with:
+      image: ${{ needs.build.outputs.image }}
+      short_commit: ${{ needs.build.outputs.short_commit }}
+      git_tag: ${{ needs.build.outputs.git_tag }}
+    secrets:
+      HELM_REPO_URL: ${{ secrets.HELM_REPO_URL }}
+      HELM_REPO_TOKEN: ${{ secrets.HELM_REPO_TOKEN }}
+      SERVICE: ${{ secrets.SERVICE }}

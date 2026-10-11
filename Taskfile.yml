@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  SHORT_COMMIT:
+    sh: git rev-parse --short HEAD
+  TAG:
+    sh: git describe --tags 2>/dev/null || echo ""
+
+tasks:
+  default:
+    env:
+      GIT_SHORT_HASH: "{{.SHORT_COMMIT}}"
+      GIT_TAG: "{{.TAG}}"
+    cmds:
+      - docker compose -f docker-compose.local.yaml up --build -d
