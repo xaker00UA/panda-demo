@@ -4,6 +4,12 @@ on:
   push:
     branches: ["**"]
   workflow_dispatch:
+    inputs:
+      deploy_gitops:
+        description: 'Запустить деплой через GitOps?'
+        required: false
+        type: boolean
+        default: false # По умолчанию выключено при ручном запуске
 
 permissions:
   contents: read
@@ -106,6 +112,7 @@ jobs:
 
   deploy-gitops:
     needs: build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_gitops == 'true'
     uses: ./.github/workflows/gitops-deploy.yaml
     with:
       image: ${{ needs.build.outputs.image }}
