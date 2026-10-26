@@ -20,26 +20,57 @@ rollback_compose=(docker --config "$docker_config" compose --project-directory "
 # The same check verifies the restored release. Older releases may lack healthchecks.
 monitor_release() {
   local deadline=$1 legacy=${2:-false}
-  local healthy_since=-1 fingerprint='' previous_fingerprint=''
-  local all_healthy=false service container info status health restarts started remaining
+  local services=(panda-app nginx) healthy_since=(-1 -1) last_checked=(-1 -1)
+  local container_ids=('' '') fingerprints=('' '') previous_states=('' '')
+  local index service container info status health restarts started remaining result
+  local fingerprint state healthy stable age failed=false
   while (( SECONDS < deadline )); do
-    all_healthy=true
-    fingerprint=''
-    for service in panda-app nginx; do
+    for index in "${!services[@]}"; do
+      service=${services[$index]}
       remaining=$((deadline - SECONDS))
-      (( remaining > 0 )) || { all_healthy=false; break; }
-      container=$(timeout "$remaining" "${active_compose[@]}" ps --all --quiet "$service") || return 1
+      # Ending the observation window is not a failed healthcheck. Keep the last
+      # confirmed state if the deadline falls between queries or interrupts one.
+      (( remaining > 0 )) || break 2
+      if container=$(timeout "$remaining" "${active_compose[@]}" ps --all --quiet "$service"); then
+        :
+      else
+        result=$?
+        if (( result == 124 && SECONDS >= deadline )); then break 2; fi
+        echo "Failed to find container for $service (exit $result)" >&2
+        return 1
+      fi
       if [[ -z "$container" ]]; then
         echo "Missing container: $service" >&2
         return 1
       fi
+      if [[ "$container" != "${container_ids[$index]}" ]]; then
+        healthy_since[$index]=-1
+        container_ids[$index]=$container
+      fi
       remaining=$((deadline - SECONDS))
-      (( remaining > 0 )) || { all_healthy=false; break; }
-      info=$(timeout "$remaining" docker --config "$docker_config" inspect --format \
+      (( remaining > 0 )) || break 2
+      if info=$(timeout "$remaining" docker --config "$docker_config" inspect --format \
         '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}|{{.State.StartedAt}}' \
-        "$container") || return 1
+        "$container"); then
+        :
+      else
+        result=$?
+        if (( result == 124 && SECONDS >= deadline )); then break 2; fi
+        echo "Failed to inspect $service (exit $result)" >&2
+        return 1
+      fi
       IFS='|' read -r status health restarts started <<< "$info"
-      fingerprint+="$container|$restarts|$started;"
+      fingerprint="$container|$restarts|$started"
+      if [[ "$fingerprint" != "${fingerprints[$index]}" ]]; then
+        healthy_since[$index]=-1
+        fingerprints[$index]=$fingerprint
+      fi
+      state="$status|$health|$restarts|$started"
+      if [[ "$state" != "${previous_states[$index]}" ]]; then
+        printf '[health] %s: status=%s health=%s restarts=%s started=%s\n' \
+          "$service" "$status" "$health" "$restarts" "$started" >&2
+        previous_states[$index]=$state
+      fi
       if (( restarts >= 3 )); then
         echo "Restart loop: $service restarted $restarts times" >&2
         return 1
@@ -50,42 +81,54 @@ monitor_release() {
           return 1
           ;;
         running) ;;
-        *) all_healthy=false; continue ;;
+        *) healthy_since[$index]=-1; continue ;;
       esac
+      healthy=false
       if [[ "$health" == none && "$legacy" == true ]]; then
         # Compatibility with the release running before /healthz was introduced.
         remaining=$((deadline - SECONDS))
-        (( remaining > 0 )) || { all_healthy=false; break; }
+        (( remaining > 0 )) || break 2
+        local probe=(docker --config "$docker_config" exec "$container")
         if [[ "$service" == panda-app ]]; then
-          timeout "$remaining" docker --config "$docker_config" exec "$container" python -c \
-            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=2)" \
-            >/dev/null 2>&1 || all_healthy=false
+          probe+=(python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=2)")
         else
-          timeout "$remaining" docker --config "$docker_config" exec "$container" \
-            curl --fail --silent --max-time 2 http://127.0.0.1/ >/dev/null 2>&1 || all_healthy=false
+          probe+=(curl --fail --silent --max-time 2 http://127.0.0.1/)
         fi
-      elif [[ "$health" != healthy ]]; then
-        all_healthy=false
+        if timeout "$remaining" "${probe[@]}" >/dev/null 2>&1; then
+          healthy=true
+        else
+          result=$?
+          if (( result == 124 && SECONDS >= deadline )); then break 2; fi
+        fi
+      elif [[ "$health" == healthy ]]; then
+        healthy=true
+      fi
+      last_checked[$index]=$SECONDS
+      if [[ "$healthy" == true ]]; then
+        if (( healthy_since[index] < 0 )); then healthy_since[$index]=$SECONDS; fi
+      else
+        healthy_since[$index]=-1
       fi
     done
-    if [[ "$all_healthy" == true ]]; then
-      if (( healthy_since < 0 )) || [[ "$fingerprint" != "$previous_fingerprint" ]]; then
-        healthy_since=$SECONDS
-      fi
-    else
-      healthy_since=-1
-    fi
-    previous_fingerprint=$fingerprint
     remaining=$((deadline - SECONDS))
     if (( remaining > 0 )); then
       if (( remaining > 2 )); then sleep 2; else sleep "$remaining"; fi
     fi
   done
-  if [[ "$all_healthy" == true ]] && (( healthy_since >= 0 && SECONDS - healthy_since >= 10 )); then
-    return 0
+  for index in "${!services[@]}"; do
+    stable=0
+    age=-1
+    if (( healthy_since[index] >= 0 )); then stable=$((SECONDS - healthy_since[index])); fi
+    if (( last_checked[index] >= 0 )); then age=$((SECONDS - last_checked[index])); fi
+    printf '[health] %s: stable=%ss last_check_age=%ss\n' "${services[$index]}" "$stable" "$age" >&2
+    # Do not accept a stale success if Docker stopped responding near the deadline.
+    if (( healthy_since[index] < 0 || stable < 10 || age < 0 || age > 5 )); then failed=true; fi
+  done
+  if [[ "$failed" == true ]]; then
+    echo 'Release needs 10 seconds of stable health and a health confirmation within the last 5 seconds' >&2
+    return 1
   fi
-  echo 'Release did not stay healthy for the last 10 seconds of the 60-second window' >&2
-  return 1
+  return 0
 }
 
 rollback() {
