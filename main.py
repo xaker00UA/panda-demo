@@ -21,7 +21,6 @@ async def root():
 </head>
 <body style="font-family: Arial, sans-serif; padding: 20px;">
     <h2>Hello World</h2>
-    <p>This is a demo application for Panda Team.</p>
     <p>New functionality has been added</p>
     <p><b>Commit: {config.GIT_SHORT_HASH}</b></p>
     <p>{line_tag}</p>
