@@ -6,6 +6,11 @@ from src.config import config
 app = FastAPI(title="Panda-Demo", description="A demo application for Panda")
 
 
+@app.get("/healthz")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     line_tag = f"<br><b>Version: {config.GIT_TAG}</b>" if config.GIT_TAG else ""

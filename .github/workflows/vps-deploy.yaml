@@ -52,7 +52,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Pull repository and restart containers
+      - name: Deploy with health checks and automatic rollback
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}

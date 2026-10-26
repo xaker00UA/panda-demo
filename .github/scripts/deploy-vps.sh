@@ -30,30 +30,7 @@ chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
   printf 'export DEPLOY_BRANCH=%q\n' "$DEPLOY_BRANCH"
   printf 'export GHCR_USER=%q\n' "$GHCR_USER"
   printf 'export GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
-  cat <<'REMOTE'
-set -euo pipefail
-cd "$VPS_PATH"
-
-git fetch origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
-git switch "$DEPLOY_BRANCH"
-git pull --ff-only origin "$DEPLOY_BRANCH"
-# Pin Compose configuration to the commit that produced the published image.
-git checkout --detach "$DEPLOY_COMMIT"
-
-docker_config=$(mktemp -d)
-trap 'rm -rf "$docker_config"' EXIT
-printf '%s' "$GHCR_TOKEN" | docker --config "$docker_config" login ghcr.io \
-  --username "$GHCR_USER" --password-stdin
-unset GHCR_TOKEN
-
-printf 'APP_IMAGE=%s\nGIT_SHORT_HASH=%s\nGIT_TAG=%s\n' \
-  "$APP_IMAGE" "$GIT_SHORT_HASH" "$GIT_TAG" > .env.deploy
-
-# Pull first so a missing image does not stop the currently running app.
-docker --config "$docker_config" compose --env-file .env.deploy pull
-docker --config "$docker_config" compose --env-file .env.deploy down || true
-docker --config "$docker_config" compose --env-file .env.deploy up -d --no-build
-REMOTE
+  cat "$(dirname "${BASH_SOURCE[0]}")/deploy-vps-remote.sh"
 } | ssh -i "$ssh_dir/key" \
   -p "${VPS_PORT:-22}" \
   -o BatchMode=yes \

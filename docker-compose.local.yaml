@@ -12,7 +12,12 @@ services:
     environment:
       GIT_SHORT_HASH: ${GIT_SHORT_HASH:-unknown}
       GIT_TAG: ${GIT_TAG:-}
-
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   nginx:
     image: nginx:latest
@@ -24,3 +29,9 @@ services:
       - "80:80"
     depends_on:
       - panda-app
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
